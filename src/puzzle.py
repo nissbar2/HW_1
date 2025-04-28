@@ -119,26 +119,23 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
 
 def quiz_question_1() -> Literal["w2c", "c2w"]:
     """In what format was your puzzle dataset?"""
-
-    raise NotImplementedError("This is your homework.")
+    return "c2w"
 
 
 def quiz_question_2() -> Literal["+x", "-x", "+y", "-y", "+z", "-z"]:
     """In your puzzle dataset's format, what was the camera look vector?"""
+    return "+z"
 
-    raise NotImplementedError("This is your homework.")
 
 
 def quiz_question_3() -> Literal["+x", "-x", "+y", "-y", "+z", "-z"]:
     """In your puzzle dataset's format, what was the camera up vector?"""
-
-    raise NotImplementedError("This is your homework.")
+    return "-y"
 
 
 def quiz_question_4() -> Literal["+x", "-x", "+y", "-y", "+z", "-z"]:
     """In your puzzle dataset's format, what was the camera right vector?"""
-
-    raise NotImplementedError("This is your homework.")
+    return "+x"
 
 
 def explanation_of_problem_solving_process() -> str:
@@ -146,5 +143,11 @@ def explanation_of_problem_solving_process() -> str:
     We'll only grade you on whether you provide a descriptive answer, not on how you
     solved the puzzle (brute force, deduction, etc.).
     """
-
-    raise NotImplementedError("This is your homework.")
+    return ("I solved the puzzle by analyzing the convert_dataset() function."
+            " The function checks both camera-to-world and world-to-camera "
+            "interpretations by evaluating the camera origin distance."
+            " Since the direct extrinsic matrices (without inversion)"
+            " matched the expected camera origin, I concluded that the "
+            "original dataset was already in camera-to-world format."
+            " Based on standard OpenCV conventions, I identified the "
+            "camera look, up, and right directions accordingly.")
