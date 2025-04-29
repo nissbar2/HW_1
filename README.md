@@ -154,7 +154,7 @@ The cameras are arranged as described below. Use this information to help you fi
 
 * The camera origins are always exactly 2 units from the origin.
 * The world up vector is $+y$, and all cameras have $y \geq 0$.
-* All camera look vectors point directly at the origin.
+* All camera look vectors are at 90 degree to the origin.
 * All camera up vectors are pointed "up" in the world. In other words, the dot product between any camera up vector and $+y$ is positive.
 
 Hint: How might one build a rotation matrix to convert between camera coordinate systems?

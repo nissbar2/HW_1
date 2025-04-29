@@ -59,7 +59,6 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
     world_up = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=extrinsics.device)
 
     for E in extrinsics:
-        # Try both interpretations and see which one works better
         # E may be cam2world or world2cam → we want camera origin in world space
         cam2world_candidate = E
         world2cam_candidate = torch.linalg.inv(E)
@@ -74,7 +73,19 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
         dist1 = torch.norm(origin_1)
         dist2 = torch.norm(origin_2)
 
-        if torch.isclose(dist1, torch.tensor(2.0, device=extrinsics.device), atol=1e-2):
+        if (torch.isclose(dist1, torch.tensor(2.0, device=extrinsics.device), atol=1e-2) and
+                torch.isclose(dist2, torch.tensor(2.0, device=extrinsics.device), atol=1e-2)):
+            # Both are valid candidates, choose the one with matching look direction
+            look_1 = torch.nn.functional.normalize(-origin_1, dim=0)
+            look_2 = torch.nn.functional.normalize(-origin_2, dim=0)
+            for i in range(3):
+                if torch.isclose(torch.dot(look_1, E[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
+                    camera_origin = origin_1
+                    break
+                elif torch.isclose(torch.dot(look_2, E[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
+                    camera_origin = origin_2
+                    break
+        elif torch.isclose(dist1, torch.tensor(2.0, device=extrinsics.device), atol=1e-2):
             camera_origin = origin_1
         elif torch.isclose(dist2, torch.tensor(2.0, device=extrinsics.device), atol=1e-2):
             camera_origin = origin_2
@@ -92,7 +103,7 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
         else:
             right = torch.nn.functional.normalize(right, dim=0)
 
-        # Step 3: Up = look × right (not world up)
+        # Step 3: Up = look × right
         up = torch.cross(look, right)
         up = torch.nn.functional.normalize(up, dim=0)
 
@@ -146,8 +157,14 @@ def explanation_of_problem_solving_process() -> str:
     return ("I solved the puzzle by analyzing the convert_dataset() function."
             " The function checks both camera-to-world and world-to-camera "
             "interpretations by evaluating the camera origin distance."
+            "Which due to translation rotation properties leads to the same"
+            "distance from the world origin. I therefore checked the "
+            "camera look direction matching by checking the dot product of the "
+            "camera look vector with the camera axes. "
             " Since the direct extrinsic matrices (without inversion)"
             " matched the expected camera origin, I concluded that the "
             "original dataset was already in camera-to-world format."
+            " The camera look direction was determined by "
+            "normalizing the negative camera origin. "
             " Based on standard OpenCV conventions, I identified the "
-            "camera look, up, and right directions accordingly.")
+            "camera up, and right directions accordingly.")
