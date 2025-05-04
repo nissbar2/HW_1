@@ -79,12 +79,13 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
             look_1 = torch.nn.functional.normalize(-origin_1, dim=0)
             look_2 = torch.nn.functional.normalize(-origin_2, dim=0)
             for i in range(3):
-                if torch.isclose(torch.dot(look_1, E[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
+                if torch.isclose(torch.dot(look_1, cam2world_candidate[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
                     camera_origin = origin_1
                     break
-                elif torch.isclose(torch.dot(look_2, E[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
+                elif torch.isclose(torch.dot(look_2, world2cam_candidate[:3, i]), torch.tensor(-1.0, device=extrinsics.device), atol=1e-2):
                     camera_origin = origin_2
                     break
+
         elif torch.isclose(dist1, torch.tensor(2.0, device=extrinsics.device), atol=1e-2):
             camera_origin = origin_1
         elif torch.isclose(dist2, torch.tensor(2.0, device=extrinsics.device), atol=1e-2):
@@ -103,7 +104,7 @@ def convert_dataset(dataset: PuzzleDataset) -> PuzzleDataset:
         else:
             right = torch.nn.functional.normalize(right, dim=0)
 
-        # Step 3: Up = look × right
+        # Step 3: Up = look × right (not world up)
         up = torch.cross(look, right)
         up = torch.nn.functional.normalize(up, dim=0)
 
@@ -157,14 +158,17 @@ def explanation_of_problem_solving_process() -> str:
     return ("I solved the puzzle by analyzing the convert_dataset() function."
             " The function checks both camera-to-world and world-to-camera "
             "interpretations by evaluating the camera origin distance."
-            "Which due to translation rotation properties leads to the same"
-            "distance from the world origin. I therefore checked the "
+            "Which due to translation rotation properties lead to the same"
+            "norm 2 distance. I therefore checked the "
             "camera look direction matching by checking the dot product of the "
             "camera look vector with the camera axes. "
             " Since the direct extrinsic matrices (without inversion)"
             " matched the expected camera origin, I concluded that the "
             "original dataset was already in camera-to-world format."
-            " The camera look direction was determined by "
-            "normalizing the negative camera origin. "
-            " Based on standard OpenCV conventions, I identified the "
-            "camera up, and right directions accordingly.")
+            " Subsequently, the function reconstructs a standardized c2w"
+            " matrix based on geometric principles, ensuring it follows the "
+            "OpenCV convention (+X right, -Y up, +Z forward/look). "
+            "It calculates the look, right, and up vectors based on the "
+            "camera's position relative to the world origin and the world's up "
+            "direction ([0,1,0]). A check on the determinant ensures a "
+            "right-handed coordinate system.")
