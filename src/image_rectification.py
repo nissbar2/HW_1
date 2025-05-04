@@ -41,158 +41,284 @@ def compute_epipole(points1: np.array,
         e /= e[-1]
 
     return e
-    
 
-def compute_matching_homographies(e2: np.array,
-                                  F: np.array,
-                                  im2: np.array,
-                                  points1: np.array,
-                                  points2: np.array) -> tuple:
-    '''
-    Determines homographies H1 and H2 such that they
-    rectify a pair of images
+
+def compute_matching_homographies(e2: np.ndarray,
+                                  F: np.ndarray,
+                                  im2: np.ndarray,
+                                  points1: np.ndarray,
+                                  points2: np.ndarray) -> tuple:
+    """
+    Determines homographies H1 and H2 such that they rectify a pair of images.
+    Follows the algorithm described in the course notes (Hartley & Zisserman approach).
+
     Arguments:
-        e2 - the second epipole
-        F - the Fundamental matrix
-        im2 - the second image
-        points1 - N points in the first image that match with points2
-        points2 - N points in the second image that match with points1
-    Returns:
-        H1 - the homography associated with the first image
-        H2 - the homography associated with the second image
-    '''
-    # === Step 1: Compute H2 ===
+        e2 (np.ndarray): The epipole in the second image (e'), shape (3,).
+                         Assumed normalized (last coordinate is 1).
+        F (np.ndarray): The Fundamental matrix, shape (3, 3).
+        im2 (np.ndarray): The second image (used for dimensions), shape (H, W, C) or (H, W).
+        points1 (np.ndarray): N points in the first image, shape (N, 2).
+        points2 (np.ndarray): N points in the second image, shape (N, 2).
 
-    # Move image center to origin
-    h, w = im2.shape[:2]
+    Returns:
+        H1 (np.ndarray): The homography for the first image, shape (3, 3).
+        H2 (np.ndarray): The homography for the second image, shape (3, 3).
+    """
+    if points1.shape[1] == 3:
+        # aviod div by zero
+        points1[points1[:, 2] == 0, 2] = 1e-8
+        points1 = points1[:, :2] / points1[:, 2][:, np.newaxis]
+    if points2.shape[1] == 3:
+        # aviod div by zero
+        points2[points2[:, 2] == 0, 2] = 1e-8
+        points2 = points2[:, :2] / points2[:, 2][:, np.newaxis]
+
+    if e2[2] != 0 and not np.isclose(e2[2], 1.0):
+        e2 = e2 / e2[2]
+
+    height, width = im2.shape[:2]
+
+    # === Compute H2 ===
+    # H2 = T_inv @ G @ R @ T
+
+    # = Translation =
     T = np.array([
-        [1, 0, -w / 2],
-        [0, 1, -h / 2],
-        [0, 0,    1  ]
+        [1, 0, -width / 2.0],
+        [0, 1, -height / 2.0],
+        [0, 0, 1]
     ])
 
-    e = e2 / e2[2]  # normalize epipole
+    e2_translated_hom = T @ e2
 
-    # Rotate epipole to lie on x-axis
-    ex, ey = e[0], e[1]
-    r = np.sqrt(ex**2 + ey**2)
-    sin_theta = ey / r
-    cos_theta = ex / r
+    # = Rotation =
+    e1_t, e2_t, e3_t = e2_translated_hom
+
+    # Calculate rotation angle components
+    d = np.sqrt(e1_t ** 2 + e2_t ** 2)
+    if np.isclose(d, 0):
+        cos_theta = 1.0
+        sin_theta = 0.0
+    else:
+        cos_theta = e1_t / d
+        sin_theta = e2_t / d
+
     R = np.array([
         [cos_theta, sin_theta, 0],
         [-sin_theta, cos_theta, 0],
         [0, 0, 1]
     ])
 
-    # Send epipole to infinity along x-axis
-    f = np.sqrt(ex**2 + ey**2)
+    # = Projective transformation =
+    e2_rotated_hom = R @ T @ e2
+    f = e2_rotated_hom[0] / e2_rotated_hom[
+        2]
+
     G = np.array([
         [1, 0, 0],
         [0, 1, 0],
-        [-1 / f, 0, 1],
+        [-1 / f, 0, 1]
     ])
 
-    H2 = G @ R @ T  # final homography for image 2
+    # = Inverse translation =
+    T_inv = np.array([
+        [1, 0, width / 2.0],
+        [0, 1, height / 2.0],
+        [0, 0, 1]
+    ])
 
-    # === Step 2: Compute H1 using least squares ===
+    # -- Compute H2 --
+    H2 = T_inv @ G @ R @ T
 
-    # Transform points2 with H2
-    def to_homog(p):
-        if p.shape[1] == 2:
-            return np.hstack([p, np.ones((p.shape[0], 1))])
-        elif p.shape[1] == 3:
-            return p
-        else:
-            raise ValueError("Point array must have shape (N,2) or (N,3)")
+    # === Compute H1 ===
+    # H1 = HA @ H2 @ M
 
-    def from_homog(p): return (p[:, :2].T / p[:, 2]).T
+    # Compute the matrix M = [e2]_x F + e2 v^T
+    e2_reshaped = e2.reshape(3, 1)
+    e2_x = np.array([
+        [0, -e2_reshaped[2, 0], e2_reshaped[1, 0]],
+        [e2_reshaped[2, 0], 0, -e2_reshaped[0, 0]],
+        [-e2_reshaped[1, 0], e2_reshaped[0, 0], 0]
+    ])
 
-    # Convert 2D points to homogeneous coordinates
-    p2_h = to_homog(points2)  # shape: (N, 3)
+    # Use v = [1, 1, 1]^T
+    v = np.ones((1, 3))
 
-    # Transform points2 using H2
-    p2_prime_h = (H2 @ p2_h.T).T  # shape: (N, 3)
-    p2_prime = p2_prime_h[:, :2] / p2_prime_h[:, 2:]
+    M = e2_x @ F + e2_reshaped @ v
 
-    # Now estimate H1 that maps points1 to p2_prime
-    H1, _ = cv2.findHomography(points1[:, :2], p2_prime)
+    n_points = points1.shape[0]
+    points1_hom = np.hstack((points1, np.ones((n_points, 1))))
+    points2_hom = np.hstack((points2, np.ones((n_points, 1))))
 
-    # Normalize
-    H1 = H1 / H1[2, 2]
-    H2 = H2 / H2[2, 2]
+    p1_transformed_hom = (H2 @ M @ points1_hom.T).T
+    p2_transformed_hom = (H2 @ points2_hom.T).T
+
+    # Normalize the transformed points (divide by the third coordinate)
+    p1_w = p1_transformed_hom[:, 2].reshape(-1, 1)
+    p2_w = p2_transformed_hom[:, 2].reshape(-1, 1)
+
+    p1_w[np.isclose(p1_w, 0)] = 1e-8  # Avoid division by zero
+    p2_w[np.isclose(p2_w, 0)] = 1e-8
+
+    p1_transformed = p1_transformed_hom[:, :2] / p1_w
+    p2_transformed = p2_transformed_hom[:, :2] / p2_w
+
+    # Extract coordinates
+    x_hat = p1_transformed[:, 0]
+    y_hat = p1_transformed[:, 1]
+    x_prime_hat = p2_transformed[:, 0]
+    y_prime_hat = p2_transformed[:,
+                  1]
+
+    W = np.vstack([x_hat, y_hat, np.ones(n_points)]).T  # Shape (N, 3)
+    b = x_prime_hat  # Shape (N,)
+
+    # Solve the least squares problem Wa = b for 'a'
+    a, residuals, rank, s = np.linalg.lstsq(W, b, rcond=None)
+    a1, a2, a3 = a
+
+    # Construct matrix HA
+    HA = np.array([
+        [a1, a2, a3],
+        [0, 1, 0],
+        [0, 0, 1]
+    ])
+
+    # -- Compute H1 --
+    H1 = HA @ H2 @ M
 
     return H1, H2
 
 
-def compute_rectified_image(im: np.array,
-                            H: np.array) -> tuple:
-    '''
-    Rectifies an image using a homography matrix
+def compute_rectified_image(im: np.array, H: np.array) -> tuple:
+    """
+    Rectifies an image using a homography matrix.
+
     Arguments:
-        im - an image
-        H - a homography matrix that rectifies the image
+        im - an image represented as a NumPy array (H x W or H x W x C)
+        H - a 3x3 homography matrix that rectifies the image
+
     Returns:
         new_image - a new image matrix after applying the homography
-        offset - the offest in the image.
-    '''
+        offset - a tuple (ox, oy) representing the translation offset
+                 of the top-left corner of the original image bounds
+                 within the new rectified coordinate system.
+    """
 
-    # TODO: Implement this method!
+    h, w = im.shape[:2]
+    is_color = len(im.shape) == 3
+    channels = im.shape[2] if is_color else 1
+
+    corners = np.array([
+        [0, 0, 1],  # Top-left
+        [w - 1, 0, 1],  # Top-right
+        [0, h - 1, 1],  # Bottom-left
+        [w - 1, h - 1, 1]  # Bottom-right
+    ]).T
+
+    # Transform corners using homography H
+    new_corners_h = H @ corners
+
+    # Convert back to Cartesian
+    new_corners_h[2, :] = np.where(np.abs(new_corners_h[2, :]) < 1e-8, 1e-8,
+                                   new_corners_h[2, :])
+    new_corners = new_corners_h[:2, :] / new_corners_h[2, :]
+
+    # Determine the bounds of the new image
+    min_x = np.floor(np.min(new_corners[0, :])).astype(int)
+    max_x = np.ceil(np.max(new_corners[0, :])).astype(int)
+    min_y = np.floor(np.min(new_corners[1, :])).astype(int)
+    max_y = np.ceil(np.max(new_corners[1, :])).astype(int)
+
+    new_w = max_x - min_x
+    new_h = max_y - min_y
+    offset = (min_x,
+              min_y)  # Offset represents the top-left corner in the *rectified* coordinate system
 
     H_inv = np.linalg.inv(H)
 
-    h, w = im.shape[:2]
-
-    # Step 1: Map the corners of the image to get output bounds
-    corners = np.array([
-        [0, 0, 1],
-        [w, 0, 1],
-        [0, h, 1],
-        [w, h, 1]
-    ])  # (4, 3)
-
-    warped_corners = (H @ corners.T).T  # (4, 3)
-    warped_corners /= warped_corners[:, 2][:, None]
-
-    x_coords = warped_corners[:, 0]
-    y_coords = warped_corners[:, 1]
-
-    x_min, x_max = np.floor(x_coords.min()), np.ceil(x_coords.max())
-    y_min, y_max = np.floor(y_coords.min()), np.ceil(y_coords.max())
-
-    new_w = int(x_max - x_min)
-    new_h = int(y_max - y_min)
-
-    # Offset to shift all coords into positive bounds
-    x_offset = -x_min
-    y_offset = -y_min
-    offset = (y_offset, x_offset)
-
-    # Step 2: Create meshgrid for new image
-    xx, yy = np.meshgrid(np.arange(new_w), np.arange(new_h))
-    ones = np.ones_like(xx)
-    grid = np.stack([xx + x_min, yy + y_min, ones], axis=-1)  # (H, W, 3)
-
-    # Step 3: Map these new pixels back to original image using H⁻¹
-    flat_grid = grid.reshape(-1, 3).T  # (3, H*W)
-    orig_coords = (H_inv @ flat_grid).T  # (H*W, 3)
-    orig_coords /= orig_coords[:, 2][:, None]
-    x_src = orig_coords[:, 0]
-    y_src = orig_coords[:, 1]
-
-    # Step 4: Interpolate using scipy.ndimage.map_coordinates
-    if im.ndim == 2:
-        # Grayscale
-        warped = map_coordinates(im, [y_src, x_src], order=1, mode='reflect')
-        new_image = warped.reshape((new_h, new_w))
+    # 7. Create the output image canvas
+    #    Initialize with zeros (black) or another background color if desired
+    if is_color:
+        new_image = np.zeros((new_h, new_w, channels), dtype=im.dtype)
     else:
-        # Color image: warp each channel
-        warped_channels = []
-        for c in range(im.shape[2]):
-            warped = map_coordinates(im[:, :, c], [y_src, x_src], order=1, mode='reflect')
-            warped_channels.append(warped.reshape((new_h, new_w)))
-        new_image = np.stack(warped_channels, axis=2)
+        new_image = np.zeros((new_h, new_w), dtype=im.dtype)
 
+    # inverse mapping
+
+    x_new_coords = np.arange(new_w) + min_x
+    y_new_coords = np.arange(new_h) + min_y
+    xx_new, yy_new = np.meshgrid(x_new_coords, y_new_coords)
+
+    pts_new_h = np.vstack((
+        xx_new.ravel(),
+        yy_new.ravel(),
+        np.ones(new_h * new_w)
+    ))
+
+    pts_orig_h = H_inv @ pts_new_h
+
+    # Convert back to Cartesian coordinates
+    w_orig = pts_orig_h[2, :]
+    valid_w = np.abs(w_orig) >= 1e-8  # Mask for valid points
+    pts_orig = np.zeros((2, new_h * new_w))  # Initialize with zeros
+
+    # Calculate coordinates only for valid points
+    pts_orig[0, valid_w] = pts_orig_h[0, valid_w] / w_orig[valid_w]  # x_orig
+    pts_orig[1, valid_w] = pts_orig_h[1, valid_w] / w_orig[valid_w]  # y_orig
+
+    # Reshape to image dimensions
+    x_orig = pts_orig[0, :].reshape(new_h, new_w)
+    y_orig = pts_orig[1, :].reshape(new_h, new_w)
+    valid_mask = valid_w.reshape(new_h, new_w)  # Also reshape the validity mask
+
+    # sample pixel values using bilinear interpolation
+    x1 = np.floor(x_orig).astype(int)
+    y1 = np.floor(y_orig).astype(int)
+    x2 = x1 + 1
+    y2 = y1 + 1
+
+    dx = x_orig - x1
+    dy = y_orig - y1
+
+    # Create boundary masks to check if the 4 neighbors are within the original image bounds
+    mask11 = (x1 >= 0) & (x1 < w) & (y1 >= 0) & (y1 < h)
+    mask12 = (x1 >= 0) & (x1 < w) & (y2 >= 0) & (y2 < h)
+    mask21 = (x2 >= 0) & (x2 < w) & (y1 >= 0) & (y1 < h)
+    mask22 = (x2 >= 0) & (x2 < w) & (y2 >= 0) & (y2 < h)
+
+    # Combine masks
+    valid_interp_mask = mask11 & mask12 & mask21 & mask22 & valid_mask
+
+    y1_valid = y1[valid_interp_mask]
+    x1_valid = x1[valid_interp_mask]
+    y2_valid = y2[valid_interp_mask]
+    x2_valid = x2[valid_interp_mask]
+    dx_valid = dx[valid_interp_mask]
+    dy_valid = dy[valid_interp_mask]
+
+    # Get neighbor pixel values for valid points
+    if is_color:
+        dx_valid = dx_valid[:, np.newaxis]
+        dy_valid = dy_valid[:, np.newaxis]
+
+        Q11 = im[y1_valid, x1_valid, :]
+        Q12 = im[y2_valid, x1_valid, :]
+        Q21 = im[y1_valid, x2_valid, :]
+        Q22 = im[y2_valid, x2_valid, :]
+    else:
+        Q11 = im[y1_valid, x1_valid]
+        Q12 = im[y2_valid, x1_valid]
+        Q21 = im[y1_valid, x2_valid]
+        Q22 = im[y2_valid, x2_valid]
+
+    # Perform bilinear interpolation only for valid points
+    R1 = (1 - dx_valid) * Q11 + dx_valid * Q21
+    R2 = (1 - dx_valid) * Q12 + dx_valid * Q22
+    interpolated_values = (1 - dy_valid) * R1 + dy_valid * R2
+
+    new_image[valid_interp_mask] = interpolated_values.astype(im.dtype)
     return new_image, offset
+
 
 
 def find_matches(img1: np.array, img2: np.array) -> tuple:
@@ -206,24 +332,22 @@ def find_matches(img1: np.array, img2: np.array) -> tuple:
         kp2 - the keypoints of the second image
         matches - the matches between the keypoints
     """
-    # Step 1: Create SIFT detector
     sift = cv2.SIFT_create()
 
-    # Step 2: Detect keypoints and compute descriptors
     kp1, des1 = sift.detectAndCompute(img1, None)
     kp2, des2 = sift.detectAndCompute(img2, None)
 
-    # Step 3: FLANN parameters
+    # FLANN parameters
     FLANN_INDEX_KDTREE = 1
     index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
     search_params = dict(checks=50)
 
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
-    # Step 4: Perform k-NN matching (k=2 for Lowe's ratio test)
+    # k-NN matching (k=2 for Lowe's ratio test)
     matches = flann.knnMatch(des1, des2, k=2)
 
-    # Step 5: Apply Lowe's ratio test
+    #  Apply Lowe's ratio test
     good_matches = []
     for m, n in matches:
         if m.distance < 0.75 * n.distance:
